@@ -1,0 +1,4 @@
+CREATE TABLE IF NOT EXISTS idempotency_keys (
+    key TEXT PRIMARY KEY,
+    order_id UUID NOT NULL REFERENCES orders (id) ON DELETE CASCADE
+);
