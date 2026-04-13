@@ -1,0 +1,31 @@
+name: Generate Go Code
+
+on:
+  push:
+    branches: [ main ]
+    paths: [ '**.proto' ]
+  workflow_dispatch:
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup Buf
+      uses: bufbuild/buf-setup-action@v1
+      with:
+        version: '1.28.1'
+    
+    - name: Generate Go code
+      run: |
+        buf generate
+    
+    - name: Push to generated repository
+      uses: peaceiris/actions-gh-pages@v3
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        publish_dir: ./gen
+        publish_branch: main
+        repository: russ315/ap2-proto-gen
+        personal_token: ${{ secrets.GENERATED_REPO_TOKEN }}
