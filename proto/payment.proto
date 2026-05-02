@@ -1,0 +1,37 @@
+syntax = "proto3";
+
+package payment.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "ap2/payment-service/internal/transport/grpc/proto/payment/v1;paymentv1";
+
+service PaymentService {
+  rpc AuthorizePayment(AuthorizePaymentRequest) returns (AuthorizePaymentResponse);
+  rpc GetPaymentStatus(GetPaymentStatusRequest) returns (GetPaymentStatusResponse);
+}
+
+message AuthorizePaymentRequest {
+  string order_id = 1;
+  int64 amount = 2; // Amount in cents
+}
+
+message AuthorizePaymentResponse {
+  string payment_id = 1;
+  string transaction_id = 2;
+  string status = 3;
+  int64 amount = 4;
+  google.protobuf.Timestamp created_at = 5;
+}
+
+message GetPaymentStatusRequest {
+  string order_id = 1;
+}
+
+message GetPaymentStatusResponse {
+  string payment_id = 1;
+  string transaction_id = 2;
+  string status = 3;
+  int64 amount = 4;
+  google.protobuf.Timestamp created_at = 5;
+}

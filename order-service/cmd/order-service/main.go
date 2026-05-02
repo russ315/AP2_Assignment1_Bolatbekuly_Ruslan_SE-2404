@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -13,9 +14,11 @@ import (
 
 	"github.com/gin-gonic/gin"
 	_ "github.com/lib/pq"
+	"google.golang.org/grpc"
 
-	paymentadapter "ap2/order-service/internal/adapter/payment"
+	paymentadapter "ap2/order-service/internal/adapter/grpc"
 	"ap2/order-service/internal/repository/postgres"
+	grpcx "ap2/order-service/internal/transport/grpc"
 	httpx "ap2/order-service/internal/transport/http"
 	"ap2/order-service/internal/usecase"
 )
@@ -23,7 +26,7 @@ import (
 func main() {
 	dsn := os.Getenv("ORDER_DATABASE_URL")
 	if dsn == "" {
-		dsn = "<defaultur>"
+		dsn = "postgresql://postgres:Ruslan2006%40@localhost:5432/order_db?sslmode=disable"
 	}
 
 	db, err := sql.Open("postgres", dsn)
@@ -41,16 +44,16 @@ func main() {
 		log.Fatalf("ping db: %v", err)
 	}
 
-	paymentBaseURL := os.Getenv("PAYMENT_SERVICE_URL")
-	if paymentBaseURL == "" {
-		paymentBaseURL = "http://localhost:8081"
+	paymentGrpcAddr := os.Getenv("PAYMENT_GRPC_ADDR")
+	if paymentGrpcAddr == "" {
+		paymentGrpcAddr = "localhost:50051"
 	}
 
-	// Shared outbound client with explicit timeout (assignment: max 2 seconds).
-	paymentHTTP := &http.Client{
-		Timeout: 2 * time.Second,
+	paymentClient, err := paymentadapter.NewPaymentClient(paymentGrpcAddr)
+	if err != nil {
+		log.Fatalf("failed to create payment client: %v", err)
 	}
-	paymentClient := paymentadapter.NewRestClient(paymentBaseURL, paymentHTTP)
+	defer paymentClient.Close()
 
 	orderRepo := postgres.NewOrderRepository(db)
 	createUC := usecase.NewCreateOrder(orderRepo, paymentClient)
@@ -58,18 +61,41 @@ func main() {
 	cancelUC := usecase.NewCancelOrder(orderRepo)
 	h := httpx.NewHandlers(createUC, getUC, cancelUC)
 
+	// Setup gRPC server for order streaming
+	grpcServer := grpc.NewServer()
+	orderGrpcServer := grpcx.NewOrderServer(db)
+	grpcx.RegisterOrderServer(grpcServer, orderGrpcServer)
+
+	orderGrpcAddr := os.Getenv("ORDER_GRPC_ADDR")
+	if orderGrpcAddr == "" {
+		orderGrpcAddr = ":50052"
+	}
+
+	grpcListener, err := net.Listen("tcp", orderGrpcAddr)
+	if err != nil {
+		log.Fatalf("failed to listen on gRPC port %s: %v", orderGrpcAddr, err)
+	}
+
+	go func() {
+		log.Printf("order-service gRPC streaming listening on %s", orderGrpcAddr)
+		if err := grpcServer.Serve(grpcListener); err != nil {
+			log.Fatalf("gRPC server failed: %v", err)
+		}
+	}()
+
+	// Setup HTTP server
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 	r.Use(gin.Recovery(), gin.Logger())
 	httpx.RegisterRoutes(r, h)
 
-	addr := os.Getenv("ORDER_HTTP_ADDR")
-	if addr == "" {
-		addr = ":8080"
+	httpAddr := os.Getenv("ORDER_HTTP_ADDR")
+	if httpAddr == "" {
+		httpAddr = ":8082"
 	}
 
 	srv := &http.Server{
-		Addr:              addr,
+		Addr:              httpAddr,
 		Handler:           r,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
@@ -78,9 +104,9 @@ func main() {
 	}
 
 	go func() {
-		log.Printf("order-service listening on %s (payment API %s)", addr, paymentBaseURL)
+		log.Printf("order-service HTTP listening on %s (payment gRPC %s)", httpAddr, paymentGrpcAddr)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("listen: %v", err)
+			log.Fatalf("HTTP server failed: %v", err)
 		}
 	}()
 
@@ -88,9 +114,19 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
+	// Graceful shutdown
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()
-	if err := srv.Shutdown(shutdownCtx); err != nil {
-		fmt.Fprintf(os.Stderr, "shutdown: %v\n", err)
-	}
+
+	log.Println("Shutting down servers...")
+
+	go func() {
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			fmt.Fprintf(os.Stderr, "HTTP shutdown: %v\n", err)
+		}
+	}()
+
+	orderGrpcServer.Stop()
+	grpcServer.GracefulStop()
+	log.Println("Servers stopped")
 }
