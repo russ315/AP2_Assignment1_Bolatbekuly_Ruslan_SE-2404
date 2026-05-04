@@ -17,6 +17,7 @@ import (
 	"google.golang.org/grpc"
 
 	"ap2/payment-service/internal/repository/postgres"
+	"ap2/payment-service/internal/infrastructure/rabbitmq"
 	grpcx "ap2/payment-service/internal/transport/grpc"
 	httpx "ap2/payment-service/internal/transport/http"
 	"ap2/payment-service/internal/usecase"
@@ -44,7 +45,23 @@ func main() {
 	}
 
 	repo := postgres.NewPaymentRepository(db)
-	authorizeUC := usecase.NewAuthorizePayment(repo)
+
+	var publisher usecase.PaymentCompletedPublisher
+	amqpURL := os.Getenv("PAYMENT_RABBITMQ_URL")
+	if amqpURL != "" {
+		pub, err := rabbitmq.DialPublisher(amqpURL)
+		if err != nil {
+			log.Fatalf("rabbitmq publisher: %v", err)
+		}
+		defer func() {
+			if err := pub.Close(); err != nil {
+				log.Printf("rabbitmq close: %v", err)
+			}
+		}()
+		publisher = pub
+	}
+
+	authorizeUC := usecase.NewAuthorizePayment(repo, publisher)
 	getUC := usecase.NewGetPaymentByOrder(repo)
 	h := httpx.NewHandlers(authorizeUC, getUC)
 
