@@ -32,10 +32,11 @@ type paymentAPIResponse struct {
 	Status        string `json:"status"`
 }
 
-func (c *RestClient) Authorize(ctx context.Context, orderID string, amount int64) (string, string, error) {
+func (c *RestClient) Authorize(ctx context.Context, orderID string, amount int64, customerEmail string) (string, string, error) {
 	payload := map[string]any{
-		"order_id": orderID,
-		"amount":   amount,
+		"order_id":        orderID,
+		"amount":          amount,
+		"customer_email":  customerEmail,
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -69,7 +70,7 @@ func (c *RestClient) Authorize(ctx context.Context, orderID string, amount int64
 	case http.StatusConflict:
 		return "", "", usecase.ErrPaymentAlreadyRecorded
 	case http.StatusBadRequest:
-		return "", "", fmt.Errorf("payment service rejected request: %s", strings.TrimSpace(string(b)))
+		return "", "", usecase.ErrPaymentInvalidArgument
 	default:
 		if resp.StatusCode >= http.StatusInternalServerError {
 			return "", "", usecase.ErrPaymentUnavailable

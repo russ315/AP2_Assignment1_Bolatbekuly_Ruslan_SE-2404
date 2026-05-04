@@ -3,6 +3,7 @@ package grpc
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -42,12 +43,16 @@ func (s *Server) AuthorizePayment(ctx context.Context, req *paymentv1.AuthorizeP
 	}
 
 	input := usecase.AuthorizePaymentInput{
-		OrderID: req.OrderId,
-		Amount:  req.Amount,
+		OrderID:       req.OrderId,
+		Amount:        req.Amount,
+		CustomerEmail: req.GetCustomerEmail(),
 	}
 
 	output, err := s.authorizeUseCase.Execute(ctx, input)
 	if err != nil {
+		if strings.Contains(err.Error(), "customer_email is required") {
+			return nil, status.Error(codes.InvalidArgument, err.Error())
+		}
 		return nil, status.Error(codes.Internal, fmt.Sprintf("failed to authorize payment: %v", err))
 	}
 

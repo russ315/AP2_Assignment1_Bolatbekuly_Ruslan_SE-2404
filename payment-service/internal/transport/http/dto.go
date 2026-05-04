@@ -1,8 +1,9 @@
 package http
 
 type createPaymentRequest struct {
-	OrderID string `json:"order_id" binding:"required"`
-	Amount  int64  `json:"amount" binding:"required,gt=0"`
+	OrderID       string `json:"order_id" binding:"required"`
+	Amount        int64  `json:"amount" binding:"required,gt=0"`
+	CustomerEmail string `json:"customer_email" binding:"required"`
 }
 
 type createPaymentResponse struct {

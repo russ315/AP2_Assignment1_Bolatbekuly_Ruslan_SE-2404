@@ -9,4 +9,5 @@ var (
 	ErrCancelNotAllowed       = errors.New("only pending orders can be cancelled")
 	ErrPaymentAlreadyRecorded = errors.New("payment already exists for order")
 	ErrPaymentNotFound        = errors.New("payment not found for order")
+	ErrPaymentInvalidArgument = errors.New("payment invalid argument")
 )

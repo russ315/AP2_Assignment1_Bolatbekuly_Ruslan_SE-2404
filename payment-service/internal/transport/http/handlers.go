@@ -26,12 +26,14 @@ func (h *Handlers) CreatePayment(c *gin.Context) {
 	}
 
 	out, err := h.authorize.Execute(c.Request.Context(), usecase.AuthorizePaymentInput{
-		OrderID: strings.TrimSpace(req.OrderID),
-		Amount:  req.Amount,
+		OrderID:       strings.TrimSpace(req.OrderID),
+		Amount:        req.Amount,
+		CustomerEmail: strings.TrimSpace(req.CustomerEmail),
 	})
 	if err != nil {
 		if strings.Contains(err.Error(), "amount must be greater than zero") ||
-			strings.Contains(err.Error(), "order_id is required") {
+			strings.Contains(err.Error(), "order_id is required") ||
+			strings.Contains(err.Error(), "customer_email is required") {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}

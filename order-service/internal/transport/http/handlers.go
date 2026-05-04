@@ -35,13 +35,14 @@ func (h *Handlers) CreateOrder(c *gin.Context) {
 
 	order, err := h.create.Execute(c.Request.Context(), usecase.CreateOrderInput{
 		CustomerID:     req.CustomerID,
+		CustomerEmail:  req.CustomerEmail,
 		ItemName:       req.ItemName,
 		Amount:         req.Amount,
 		IdempotencyKey: idem,
 	})
 	if err != nil {
 		if errors.Is(err, usecase.ErrInvalidInput) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "customer_id, item_name, and amount > 0 are required"})
+			c.JSON(http.StatusBadRequest, gin.H{"error": "customer_id, customer_email, item_name, and amount > 0 are required"})
 			return
 		}
 		if errors.Is(err, usecase.ErrPaymentUnavailable) {

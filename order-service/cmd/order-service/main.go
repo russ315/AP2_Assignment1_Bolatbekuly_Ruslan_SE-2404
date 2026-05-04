@@ -91,7 +91,7 @@ func main() {
 
 	httpAddr := os.Getenv("ORDER_HTTP_ADDR")
 	if httpAddr == "" {
-		httpAddr = ":8082"
+		httpAddr = ":8080"
 	}
 
 	srv := &http.Server{
