@@ -33,7 +33,7 @@ func DialPublisher(amqpURL string) (*Publisher, error) {
 	if err != nil {
 		_ = conn.Close()
 		return nil, fmt.Errorf("rabbitmq channel: %w", err)
-	}f
+	}
 	if err := ch.Confirm(false); err != nil {
 		_ = ch.Close()
 		_ = conn.Close()
