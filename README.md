@@ -1,8 +1,55 @@
-# AP2 Assignment 2 - gRPC Migration & Contract-First Development
+# AP2 – Order / Payment / Notification (gRPC + EDA)
 
-This repository contains the implementation of Assignment 2 for Advanced Programming 2, migrating the Order and Payment services from REST to gRPC communication.
+This repository implements Advanced Programming 2 coursework: Assignment 2 (gRPC between Order and Payment) and Assignment 3 (event-driven notifications via RabbitMQ).
 
-## Architecture Overview
+## Assignment 3 – Messaging, reliability, idempotency
+
+### Event flow
+
+1. Client creates an order via REST including `customer_email`.
+2. Order service calls Payment over **gRPC** (`AuthorizePayment` carries `customer_email`).
+3. Payment persists the row; if status is **Authorized**, it publishes JSON to RabbitMQ exchange `notifications.events`, routing key `payment.completed`, after **publisher confirms** (message is persistent).
+4. **Notification service** consumes from durable queue `payment.completed` with **manual ACK**: it acknowledges only after printing the required log line and recording `event_id` in PostgreSQL (`notification_db.processed_events`) for **idempotency**.
+
+### Idempotency strategy
+
+Duplicate deliveries share the same `event_id` (the payment id). Before logging, the consumer checks `processed_events`; if the id exists, it ACKs without printing again. After a successful log line, it inserts the id so retries after a crash may duplicate the log only in a narrow window (documented tradeoff); duplicate broker deliveries after the insert are suppressed.
+
+### ACK logic
+
+- Consumer uses `auto-ack = false`, prefetch 1.
+- Success path: log → insert id → `Ack`.
+- Invalid JSON / missing `event_id`: treated as poison → `Nack(false, false)` → message goes to the **dead-letter queue** (`payment.completed.dlq`) via queue arguments.
+- Transient DB errors: `Nack(false, true)` to requeue.
+- Optional DLQ demo: set env `NOTIFICATION_DLQ_DEMO_ORDER_ID` to an `order_id` value; matching messages `Nack(false, false)` into the DLQ.
+
+### Run with Docker
+
+```bash
+docker compose up --build
+```
+
+Then create an order (example):
+
+```bash
+curl -s -X POST http://localhost:8080/orders -H "Content-Type: application/json" \
+  -d "{\"customer_id\":\"c1\",\"customer_email\":\"user@example.com\",\"item_name\":\"Book\",\"amount\":9999}"
+```
+
+Watch notification logs in the `notification-service` container.
+
+### Environment variables
+
+| Service | Variable |
+|--------|----------|
+| Payment | `PAYMENT_RABBITMQ_URL` (required for publishing; omit only for local runs without notifications) |
+| Notification | `NOTIFICATION_DATABASE_URL`, `NOTIFICATION_RABBITMQ_URL` |
+
+See each service `.env.example`.
+
+---
+
+## Architecture Overview (Assignment 2)
 
 ### Before (Assignment 1)
 - Order Service (REST) <-> Payment Service (REST)
@@ -193,6 +240,7 @@ curl -X POST http://localhost:8080/orders \
   -H "Content-Type: application/json" \
   -d '{
     "customer_id": "cust123",
+    "customer_email": "user@example.com",
     "item_name": "Laptop",
     "amount": 99900
   }'

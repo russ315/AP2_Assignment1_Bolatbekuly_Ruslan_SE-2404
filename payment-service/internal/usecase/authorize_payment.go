@@ -3,6 +3,7 @@ package usecase
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -12,8 +13,9 @@ import (
 
 // AuthorizePaymentInput carries data required to authorize a payment.
 type AuthorizePaymentInput struct {
-	OrderID string
-	Amount  int64
+	OrderID       string
+	Amount        int64
+	CustomerEmail string
 }
 
 // AuthorizePaymentOutput is the result of an authorization attempt.
@@ -28,10 +30,11 @@ type AuthorizePaymentOutput struct {
 // AuthorizePayment processes a payment authorization request.
 type AuthorizePayment struct {
 	repo PaymentRepository
+	pub  PaymentCompletedPublisher // optional; nil skips broker publish
 }
 
-func NewAuthorizePayment(repo PaymentRepository) *AuthorizePayment {
-	return &AuthorizePayment{repo: repo}
+func NewAuthorizePayment(repo PaymentRepository, pub PaymentCompletedPublisher) *AuthorizePayment {
+	return &AuthorizePayment{repo: repo, pub: pub}
 }
 
 func (uc *AuthorizePayment) Execute(ctx context.Context, in AuthorizePaymentInput) (*AuthorizePaymentOutput, error) {
@@ -70,6 +73,23 @@ func (uc *AuthorizePayment) Execute(ctx context.Context, in AuthorizePaymentInpu
 
 	if err := uc.repo.Save(ctx, p); err != nil {
 		return nil, err
+	}
+
+	if p.Status == domain.StatusAuthorized && uc.pub != nil {
+		email := strings.TrimSpace(in.CustomerEmail)
+		if email == "" {
+			return nil, fmt.Errorf("customer_email is required for authorized payments")
+		}
+		err := uc.pub.PublishPaymentCompleted(ctx, PaymentCompletedEvent{
+			EventID:       p.ID,
+			OrderID:       p.OrderID,
+			AmountCents:   p.Amount,
+			CustomerEmail: email,
+			Status:        p.Status,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("publish payment completed event: %w", err)
+		}
 	}
 
 	return &AuthorizePaymentOutput{

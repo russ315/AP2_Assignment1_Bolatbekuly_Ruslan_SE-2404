@@ -1,2 +1,3 @@
 CREATE DATABASE order_db;
 CREATE DATABASE payment_db;
+CREATE DATABASE notification_db;

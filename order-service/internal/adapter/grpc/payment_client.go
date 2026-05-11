@@ -36,18 +36,22 @@ func NewPaymentClient(address string) (*PaymentClient, error) {
 }
 
 // Authorize calls the payment service via gRPC
-func (p *PaymentClient) Authorize(ctx context.Context, orderID string, amount int64) (transactionID string, paymentStatus string, err error) {
+func (p *PaymentClient) Authorize(ctx context.Context, orderID string, amount int64, customerEmail string) (transactionID string, paymentStatus string, err error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
 	req := &paymentv1.AuthorizePaymentRequest{
-		OrderId: orderID,
-		Amount:  amount,
+		OrderId:       orderID,
+		Amount:        amount,
+		CustomerEmail: customerEmail,
 	}
 
 	resp, err := p.client.AuthorizePayment(ctx, req)
 	if err != nil {
 		if s, ok := status.FromError(err); ok {
+			if s.Code() == codes.InvalidArgument {
+				return "", "", usecase.ErrPaymentInvalidArgument
+			}
 			if s.Code() == codes.Internal {
 				return "", "", usecase.ErrPaymentUnavailable
 			}

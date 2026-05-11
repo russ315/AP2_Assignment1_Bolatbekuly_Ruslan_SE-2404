@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -13,10 +14,11 @@ const paymentStatusDeclined = "Declined"
 
 // CreateOrderInput is the input for placing an order.
 type CreateOrderInput struct {
-	CustomerID       string
-	ItemName         string
-	Amount           int64
-	IdempotencyKey   *string
+	CustomerID      string
+	CustomerEmail   string
+	ItemName        string
+	Amount          int64
+	IdempotencyKey  *string
 }
 
 // CreateOrder coordinates persistence and payment authorization.
@@ -34,8 +36,9 @@ func (uc *CreateOrder) Execute(ctx context.Context, in CreateOrderInput) (*domai
 		return nil, ErrInvalidInput
 	}
 	customerID := strings.TrimSpace(in.CustomerID)
+	customerEmail := strings.TrimSpace(in.CustomerEmail)
 	itemName := strings.TrimSpace(in.ItemName)
-	if customerID == "" || itemName == "" {
+	if customerID == "" || itemName == "" || customerEmail == "" {
 		return nil, ErrInvalidInput
 	}
 
@@ -50,8 +53,11 @@ func (uc *CreateOrder) Execute(ctx context.Context, in CreateOrderInput) (*domai
 	}
 
 	// Pending: complete or reconcile payment
-	_, payStatus, err := uc.payments.Authorize(ctx, order.ID, order.Amount)
+	_, payStatus, err := uc.payments.Authorize(ctx, order.ID, order.Amount, customerEmail)
 	if err != nil {
+		if errors.Is(err, ErrPaymentInvalidArgument) {
+			return nil, ErrInvalidInput
+		}
 		if err == ErrPaymentAlreadyRecorded {
 			return uc.reconcileFromPaymentService(ctx, order)
 		}
