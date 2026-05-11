@@ -25,10 +25,18 @@ type CreateOrderInput struct {
 type CreateOrder struct {
 	orders   OrderRepository
 	payments PaymentAuthorizer
+	cache    OrderCache
 }
 
-func NewCreateOrder(orders OrderRepository, payments PaymentAuthorizer) *CreateOrder {
-	return &CreateOrder{orders: orders, payments: payments}
+func NewCreateOrder(orders OrderRepository, payments PaymentAuthorizer, cache OrderCache) *CreateOrder {
+	return &CreateOrder{orders: orders, payments: payments, cache: cache}
+}
+
+func (uc *CreateOrder) invalidate(ctx context.Context, orderID string) {
+	if uc.cache == nil || orderID == "" {
+		return
+	}
+	_ = uc.cache.Delete(ctx, orderID)
 }
 
 func (uc *CreateOrder) Execute(ctx context.Context, in CreateOrderInput) (*domain.Order, error) {
@@ -71,6 +79,7 @@ func (uc *CreateOrder) Execute(ctx context.Context, in CreateOrderInput) (*domai
 			return order, ErrPaymentUnavailable
 		}
 		_ = uc.orders.UpdateStatus(ctx, order.ID, domain.StatusFailed)
+		uc.invalidate(ctx, order.ID)
 		fresh, _ := uc.orders.GetByID(ctx, order.ID)
 		if fresh != nil {
 			order = fresh
@@ -90,6 +99,7 @@ func (uc *CreateOrder) Execute(ctx context.Context, in CreateOrderInput) (*domai
 	if err := uc.orders.UpdateStatus(ctx, order.ID, newStatus); err != nil {
 		return nil, err
 	}
+	uc.invalidate(ctx, order.ID)
 	order.Status = newStatus
 
 	return order, nil
@@ -121,6 +131,7 @@ func (uc *CreateOrder) reconcileFromPaymentService(ctx context.Context, order *d
 	if err := uc.orders.UpdateStatus(ctx, order.ID, newStatus); err != nil {
 		return nil, err
 	}
+	uc.invalidate(ctx, order.ID)
 	order.Status = newStatus
 	return order, nil
 }

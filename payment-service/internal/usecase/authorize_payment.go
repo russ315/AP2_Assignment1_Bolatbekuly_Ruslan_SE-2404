@@ -82,6 +82,7 @@ func (uc *AuthorizePayment) Execute(ctx context.Context, in AuthorizePaymentInpu
 		}
 		err := uc.pub.PublishPaymentCompleted(ctx, PaymentCompletedEvent{
 			EventID:       p.ID,
+			PaymentID:     p.ID,
 			OrderID:       p.OrderID,
 			AmountCents:   p.Amount,
 			CustomerEmail: email,

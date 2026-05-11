@@ -60,6 +60,7 @@ func DialPublisher(amqpURL string) (*Publisher, error) {
 
 type paymentCompletedPayload struct {
 	EventID       string `json:"event_id"`
+	PaymentID     string `json:"payment_id"`
 	OrderID       string `json:"order_id"`
 	Amount        int64  `json:"amount"`
 	CustomerEmail string `json:"customer_email"`
@@ -68,8 +69,13 @@ type paymentCompletedPayload struct {
 
 // PublishPaymentCompleted implements usecase.PaymentCompletedPublisher.
 func (p *Publisher) PublishPaymentCompleted(ctx context.Context, e usecase.PaymentCompletedEvent) error {
+	pid := e.PaymentID
+	if pid == "" {
+		pid = e.EventID
+	}
 	body, err := json.Marshal(paymentCompletedPayload{
 		EventID:       e.EventID,
+		PaymentID:     pid,
 		OrderID:       e.OrderID,
 		Amount:        e.AmountCents,
 		CustomerEmail: e.CustomerEmail,
