@@ -20,11 +20,16 @@ The system has been migrated from a pure REST architecture to a hybrid REST/gRPC
 - **Port**: 8080 (HTTP), 50052 (gRPC Streaming)
 - **Database**: PostgreSQL (order_db)
 
-#### 3. Notification Service (Assignment 3)
-- **Protocol**: AMQP consumer only (no calls to Order/Payment)
+#### 3. Notification Service (Assignment 3–4)
+- **Protocol**: AMQP consumer (RabbitMQ); no blocking HTTP in the hot path for email
 - **Broker**: RabbitMQ (`notifications.events` → `payment.completed` queue)
-- **Database**: PostgreSQL (`notification_db`) for idempotent `event_id` tracking
+- **Databases**: PostgreSQL (`notification_db`) for `event_id` deduplication; **Redis** for `payment_id` notification completion (Assignment 4)
+- **Email**: **Adapter pattern** — `PROVIDER_MODE=REAL` → Mailjet REST API; `SIMULATED` → latency + random failures + retries with exponential backoff
 - **Ports**: none exposed by default (runs inside Docker network)
+
+#### 3b. Redis (Assignment 4)
+- **Order Service**: cache-aside for `GET /orders/:id` (`order:{uuid}` keys, TTL from env); invalidation on order status updates
+- **Notification Service**: idempotency keys `notify:payment:{payment_id}` with status `SENT` and TTL
 
 #### 4. Message Broker
 - **RabbitMQ**: durable exchanges/queues, publisher confirms, manual consumer ACKs, optional DLQ (`payment.completed.dlq`)
@@ -79,7 +84,7 @@ Streaming Client
 
 After the payment row is committed and status is **Authorized**, the Payment service publishes a JSON event to the durable topic exchange `notifications.events` with routing key `payment.completed`. Publisher confirms ensure the broker accepted the message before the gRPC call succeeds.
 
-The Notification service binds a durable queue `payment.completed` with dead-lettering to `notifications.dlx` / queue `payment.completed.dlq`. It consumes with **manual acknowledgements** (`auto-ack` disabled): `Ack` only after the simulated email line is logged and the event id is stored for idempotency. Poison messages or the optional DLQ demo path use `Nack(false, false)` so RabbitMQ dead-letters them.
+The Notification service binds a durable queue `payment.completed` with dead-lettering to `notifications.dlx` / queue `payment.completed.dlq`. It consumes with **manual acknowledgements** (`auto-ack` disabled): `Ack` only after the email adapter succeeds, `event_id` is stored in PostgreSQL, and `payment_id` is marked **SENT** in Redis (Assignment 4). Poison messages or the optional DLQ demo path use `Nack(false, false)` so RabbitMQ dead-letters them. Transient provider or infrastructure errors use in-process exponential backoff retries, then `Nack(requeue)` if needed.
 
 ```mermaid
 flowchart LR
@@ -98,7 +103,11 @@ flowchart LR
   end
   subgraph Notify["Notification Service"]
     C[Consumer manual ack]
+    R[(Redis idempotency)]
     Idem[(processed_events)]
+    MJ[Mailjet or Simulated]
+    C --> R
+    C --> MJ
     C --> Idem
   end
   Pub --> X

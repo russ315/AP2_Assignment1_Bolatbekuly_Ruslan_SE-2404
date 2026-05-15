@@ -1,6 +1,26 @@
 # AP2 – Order / Payment / Notification (gRPC + EDA)
 
-This repository implements Advanced Programming 2 coursework: Assignment 2 (gRPC between Order and Payment) and Assignment 3 (event-driven notifications via RabbitMQ).
+This repository implements Advanced Programming 2 coursework: Assignment 2 (gRPC between Order and Payment), Assignment 3 (event-driven notifications via RabbitMQ), and **Assignment 4** (Redis cache-aside in Order, Redis + Mailjet/simulated adapter + retries in Notification).
+
+## Assignment 4 – Caching, Mailjet, background worker
+
+### Order Service — cache-aside (Redis)
+
+- **GET `/orders/:id`**: reads `order:{id}` from Redis; on miss loads PostgreSQL and sets the key with TTL (`ORDER_CACHE_TTL_SECONDS`, default 300s).
+- **Invalidation**: after any `orders.status` update in the create-payment and cancel flows, the corresponding Redis key is **deleted** so the next GET cannot return stale status.
+
+### Notification Service — RabbitMQ worker + Redis idempotency
+
+- Still consumes **`payment.completed`** from RabbitMQ (same exchange/queue as Assignment 3).
+- **Idempotency**: before sending email, checks Redis key `notify:payment:{payment_id}`; after a successful Mailjet/simulated send, sets value `SENT` with TTL. PostgreSQL `processed_events` remains for `event_id` deduplication.
+- **Adapter**: `PROVIDER_MODE=REAL` uses **Mailjet REST** (`MAILJET_*` env vars). `PROVIDER_MODE=SIMULATED` adds latency and random failures to exercise retries.
+- **Retries**: on provider failure, the worker retries with **exponential backoff** (`NOTIFICATION_BACKOFF_BASE_MS` × 1, 2, 4, …) up to `NOTIFICATION_EMAIL_MAX_ATTEMPTS`, then `Nack(requeue)` for broker-level retry on persistence/Redis errors.
+
+### Docker
+
+`docker-compose.yml` includes **Redis**. Set `PROVIDER_MODE=REAL` and Mailjet credentials for production-style email.
+
+See repository **`.env.example`** and per-service `.env.example` files.
 
 ## Assignment 3 – Messaging, reliability, idempotency
 
@@ -9,18 +29,18 @@ This repository implements Advanced Programming 2 coursework: Assignment 2 (gRPC
 1. Client creates an order via REST including `customer_email`.
 2. Order service calls Payment over **gRPC** (`AuthorizePayment` carries `customer_email`).
 3. Payment persists the row; if status is **Authorized**, it publishes JSON to RabbitMQ exchange `notifications.events`, routing key `payment.completed`, after **publisher confirms** (message is persistent).
-4. **Notification service** consumes from durable queue `payment.completed` with **manual ACK**: it acknowledges only after printing the required log line and recording `event_id` in PostgreSQL (`notification_db.processed_events`) for **idempotency**.
+4. **Notification service** consumes from durable queue `payment.completed` with **manual ACK**. It sends email via the **adapter** (Mailjet or simulated), uses **Redis** idempotency on `payment_id`, retries with exponential backoff, then ACKs after success and persists `event_id` in PostgreSQL for compatibility.
 
 ### Idempotency strategy
 
-Duplicate deliveries share the same `event_id` (the payment id). Before logging, the consumer checks `processed_events`; if the id exists, it ACKs without printing again. After a successful log line, it inserts the id so retries after a crash may duplicate the log only in a narrow window (documented tradeoff); duplicate broker deliveries after the insert are suppressed.
+Duplicate deliveries share the same `event_id` and `payment_id` (payment primary key). The consumer checks Redis (`notify:payment:{payment_id}`) and PostgreSQL `processed_events` for `event_id`; if already handled, it ACKs without sending again. After a successful provider call it records both stores.
 
 ### ACK logic
 
 - Consumer uses `auto-ack = false`, prefetch 1.
-- Success path: log → insert id → `Ack`.
-- Invalid JSON / missing `event_id`: treated as poison → `Nack(false, false)` → message goes to the **dead-letter queue** (`payment.completed.dlq`) via queue arguments.
-- Transient DB errors: `Nack(false, true)` to requeue.
+- Success path: provider send → `processed_events` insert → Redis `SENT` → log line → `Ack`.
+- Invalid JSON / missing `event_id` / missing `customer_email`: treated as poison → `Nack(false, false)` → **dead-letter queue** `payment.completed.dlq`.
+- Transient errors (provider, Redis, DB): `Nack(false, true)` to requeue after in-process backoff attempts.
 - Optional DLQ demo: set env `NOTIFICATION_DLQ_DEMO_ORDER_ID` to an `order_id` value; matching messages `Nack(false, false)` into the DLQ.
 
 ### Run with Docker
@@ -43,7 +63,8 @@ Watch notification logs in the `notification-service` container.
 | Service | Variable |
 |--------|----------|
 | Payment | `PAYMENT_RABBITMQ_URL` (required for publishing; omit only for local runs without notifications) |
-| Notification | `NOTIFICATION_DATABASE_URL`, `NOTIFICATION_RABBITMQ_URL` |
+| Notification | `NOTIFICATION_DATABASE_URL`, `NOTIFICATION_RABBITMQ_URL`, **`NOTIFICATION_REDIS_ADDR`**, `PROVIDER_MODE`, Mailjet vars when `REAL` |
+| Order | **`ORDER_REDIS_ADDR`**, `ORDER_CACHE_TTL_SECONDS` (optional; omit `ORDER_REDIS_ADDR` to disable cache) |
 
 See each service `.env.example`.
 

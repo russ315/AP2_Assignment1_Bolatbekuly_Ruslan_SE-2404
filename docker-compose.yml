@@ -11,6 +11,11 @@ services:
       - pgdata:/var/lib/postgresql/data
       - ./docker/initdb:/docker-entrypoint-initdb.d
 
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
   rabbitmq:
     image: rabbitmq:3.13-management-alpine
     ports:
@@ -38,11 +43,14 @@ services:
     depends_on:
       - postgres
       - payment-service
+      - redis
     environment:
       ORDER_DATABASE_URL: postgres://postgres:postgres@postgres:5432/order_db?sslmode=disable
       PAYMENT_GRPC_ADDR: payment-service:50051
       ORDER_GRPC_ADDR: ":50052"
       ORDER_HTTP_ADDR: ":8080"
+      ORDER_REDIS_ADDR: redis:6379
+      ORDER_CACHE_TTL_SECONDS: "300"
     ports:
       - "8080:8080"
       - "50052:50052"
@@ -53,9 +61,21 @@ services:
     depends_on:
       - postgres
       - rabbitmq
+      - redis
     environment:
       NOTIFICATION_DATABASE_URL: postgres://postgres:postgres@postgres:5432/notification_db?sslmode=disable
       NOTIFICATION_RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      NOTIFICATION_REDIS_ADDR: redis:6379
+      NOTIFICATION_IDEMPOTENCY_TTL_HOURS: "168"
+      NOTIFICATION_EMAIL_MAX_ATTEMPTS: "4"
+      NOTIFICATION_BACKOFF_BASE_MS: "2000"
+      # SIMULATED (default) or REAL (Mailjet)
+      PROVIDER_MODE: REAL
+      NOTIFICATION_SIM_FAIL_RATE: "0.2"
+      MAILJET_API_KEY: "f25e96ceac7a4325abbf9c4077c24c54"
+      MAILJET_API_SECRET: "bf32f49301ef462750c25c8604e2e394"
+      MAILJET_FROM_EMAIL: "ruslan74071@gmail.com"
+      MAILJET_FROM_NAME: "Example Admin"
       # Optional: set to an order_id value to force BasicNack(false,false) and route to DLQ (bonus demo).
       # NOTIFICATION_DLQ_DEMO_ORDER_ID: "__dlq_demo__"
 

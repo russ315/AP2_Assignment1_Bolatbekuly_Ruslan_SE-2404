@@ -10,6 +10,7 @@ type PaymentCompletedPublisher interface {
 // PaymentCompletedEvent is the payload published after a successful DB commit for an authorized payment.
 type PaymentCompletedEvent struct {
 	EventID       string
+	PaymentID     string
 	OrderID       string
 	AmountCents   int64
 	CustomerEmail string

@@ -9,14 +9,18 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
 	_ "github.com/lib/pq"
 	"google.golang.org/grpc"
 
 	paymentadapter "ap2/order-service/internal/adapter/grpc"
+	"ap2/order-service/internal/infrastructure/rediscache"
 	"ap2/order-service/internal/repository/postgres"
 	grpcx "ap2/order-service/internal/transport/grpc"
 	httpx "ap2/order-service/internal/transport/http"
@@ -26,7 +30,7 @@ import (
 func main() {
 	dsn := os.Getenv("ORDER_DATABASE_URL")
 	if dsn == "" {
-		dsn = "postgresql://postgres:Ruslan2006%40@localhost:5432/order_db?sslmode=disable"
+		dsn = "postgres://postgres:postgres@localhost:5432/order_db?sslmode=disable"
 	}
 
 	db, err := sql.Open("postgres", dsn)
@@ -56,9 +60,30 @@ func main() {
 	defer paymentClient.Close()
 
 	orderRepo := postgres.NewOrderRepository(db)
-	createUC := usecase.NewCreateOrder(orderRepo, paymentClient)
-	getUC := usecase.NewGetOrder(orderRepo)
-	cancelUC := usecase.NewCancelOrder(orderRepo)
+
+	var orderCache usecase.OrderCache
+	if addr := strings.TrimSpace(os.Getenv("ORDER_REDIS_ADDR")); addr != "" {
+		rdb := redis.NewClient(&redis.Options{Addr: addr})
+		rctx, rcancel := context.WithTimeout(context.Background(), 3*time.Second)
+		if err := rdb.Ping(rctx).Err(); err != nil {
+			rcancel()
+			log.Fatalf("redis ping: %v", err)
+		}
+		rcancel()
+		orderCache = rediscache.New(rdb)
+		log.Printf("order-service Redis cache enabled addr=%s", addr)
+	}
+
+	cacheTTL := 5 * time.Minute
+	if v := strings.TrimSpace(os.Getenv("ORDER_CACHE_TTL_SECONDS")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cacheTTL = time.Duration(n) * time.Second
+		}
+	}
+
+	createUC := usecase.NewCreateOrder(orderRepo, paymentClient, orderCache)
+	getUC := usecase.NewGetOrder(orderRepo, orderCache, cacheTTL)
+	cancelUC := usecase.NewCancelOrder(orderRepo, orderCache)
 	h := httpx.NewHandlers(createUC, getUC, cancelUC)
 
 	// Setup gRPC server for order streaming
